@@ -54,7 +54,15 @@ router.get('/dns-query', async request => {
 });
 
 router.post('/dns-query', async request => {
-
+	const query = await request.req.arrayBuffer();
+	const hash = await generateHash(new TextDecoder().decode(query));
+	let value = await getValue('wirePost-' + hash);
+	if(value !== null) return new Response(value, { headers: { 'Content-Type': 'application/dns-message', 'Access-Control-Allow-Origin': '*', 'Access-Control-Max-Age': '86400' } });
+	const message = await fetch('https://cloudflare-dns.com/dns-query', { method: 'POST', headers: { 'Content-Type': 'application/dns-message' }, body: query });
+	if(message.status !== 200) return new Response(null, { status: message.status });
+	const [v1, v2] = message.body.tee();
+	await setValue('wirePost-' + hash, v1);
+	return new Response(v2, { headers: { 'Content-Type': 'application/dns-message', 'Access-Control-Allow-Origin': '*', 'Access-Control-Max-Age': '86400' } });
 });
 
 export default router;
