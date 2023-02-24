@@ -1,3 +1,7 @@
 name = "rabbit-dns"
 main = "src/index.js"
 compatibility_date = "2023-02-18"
+
+kv_namespaces = [
+  { binding = "KV", id = "812258c833504c97983f771b88a2eed4" }
+]
