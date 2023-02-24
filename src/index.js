@@ -3,6 +3,7 @@ import { cors } from 'hono/cors';
 const router = new Hono();
 
 const cache = caches.default;
+const rrTypes = {'A':1,'NS':2,'MD':3,'MF':4,'CNAME':5,'SOA':6,'MB':7,'MG':8,'MR':9,'NULL':10,'WKS':11,'PTR':12,'HINFO':13,'MINFO':14,'MX':15,'TXT':16,'RP':17,'AFSDB':18,'X25':19,'ISDN':20,'RT':21,'NSAP':22,'NSAP-PTR':23,'SIG':24,'KEY':25,'PX':26,'GPOS':27,'AAAA':28,'LOC':29,'NXT':30,'EID':31,'NIMLOC':32,'SRV':33,'ATMA':34,'NAPTR':35,'KX':36,'CERT':37,'A6':38,'DNAME':39,'SINK':40,'OPT':41,'APL':42,'DS':43,'SSHFP':44,'IPSECKEY':45,'RRSIG':46,'NSEC':47,'DNSKEY':48,'DHCID':49,'NSEC3':50,'NSEC3PARAM':51,'TLSA':52,'SMIMEA':53,'HIP':55,'NINFO':56,'RKEY':57,'TALINK':58,'CDS':59,'CDNSKEY':60,'OPENPGPKEY':61,'CSYNC':62,'ZONEMD':63,'SVCB':64,'HTTPS':65,'SPF':99,'UINFO':100,'UID':101,'GID':102,'UNSPEC':103,'NID':104,'L32':105,'L64':106,'LP':107,'EUI48':108,'EUI64':109,'TKEY':249,'TSIG':250,'IXFR':251,'AXFR':252,'MAILB':253,'MAILA':254,'*':255,'URI':256,'CAA':257,'AVC':258,'DOA':259,'AMTRELAY':260,'TA':32768,'DLV':32769};
 
 function jsonResponse(json, statusCode = 200){
 	if(typeof(json) !== 'string') json = JSON.stringify(json);
@@ -88,6 +89,32 @@ async function processJsonFormat(dnsProvider, query){
 	return new Response(message.body, { headers: { 'Content-Type': 'application/dns-json', 'Access-Control-Allow-Origin': '*' } });
 }
 
+async function processProfileJsonFormat(dnsProvider, query, profile){
+	const urlParams = new URLSearchParams(query);
+	const name = urlParams.get('name');
+	const type = urlParams.get('type') || 'A';
+
+	if(profile.blocked.includes(name)){
+		const refusedResponse = {
+			"Status": 5,
+			"TC": false,
+			"RD": true,
+			"RA": true,
+			"AD": false,
+			"CD": false,
+			"Question": [{
+				"name": name,
+				"type": rrTypes[type] || 1
+			}]
+		};
+		return new Response(JSON.stringify(refusedResponse), { headers: { 'Content-Type': 'application/dns-json', 'Access-Control-Allow-Origin': '*' } });
+	}
+
+	const message = await fetch(dnsProvider + query, { headers: { 'Accept': 'application/dns-json' } });
+	if(message.status !== 200) return new Response(null, { status: message.status });
+	return new Response(message.body, { headers: { 'Content-Type': 'application/dns-json', 'Access-Control-Allow-Origin': '*' } });
+}
+
 function getDnsProvider(url){
 	const hostname = new URL(url).hostname;
 	let dnsProvider = "https://cloudflare-dns.com/dns-query";
@@ -104,9 +131,29 @@ router.use('*', cors({
 );
 
 router.get('/dns-query', async request => {
+	const hostname = new URL(request.req.url).hostname;
 	const query = new URL(request.req.url).search;
 	let contentType = request.req.header('Accept') || 'application/dns-message';
-	if(contentType === 'application/dns-json') return await processJsonFormat(getDnsProvider(request.req.url), query);
+
+	// Profiles
+	if(isMD5Valid(hostname.split('.')[0])){
+		let profile = await getValue(request.env, hostname.split('.')[0], 3600);
+		if(profile === null) return new Response(null, { status: 400 });
+
+		profile = JSON.parse(profile);
+		if(contentType === 'application/dns-json'){
+			return await processProfileJsonFormat(getDnsProvider(request.req.url), query, profile);
+		}
+
+		return jsonResponse({'error': 1060, 'info': 'debug', 'data': { 'hostname': hostname, 'query': query, 'profile': profile}});
+	}
+
+	// JSON Format
+	if(contentType === 'application/dns-json'){
+		return await processJsonFormat(getDnsProvider(request.req.url), query);
+	}
+
+	// Wire Format
 	return await processWireFormat(getDnsProvider(request.req.url), query);
 });
 
